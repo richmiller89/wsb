@@ -1,155 +1,197 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <title>WallStreetBets Sentiment Heatmap</title>
-  <!-- Include D3.js (v7) and Socket.IO -->
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
-  <style>
-    body { font-family: sans-serif; background-color: #f0f0f0; margin: 0; padding: 20px; }
-    h1 { text-align: center; }
-    svg { background-color: #fff; border: 1px solid #ccc; display: block; margin: auto; }
-    .bubble { stroke: #333; stroke-width: 1px; }
-    text { pointer-events: none; font-size: 14px; fill: #000; }
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WSB Sentiment Tracker</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
+    <style>
+        body {
+            font-family: -apple-system, system-ui, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #f0f2f5;
+        }
+
+        .dashboard {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #1a237e;
+            margin-bottom: 30px;
+        }
+
+        .charts {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .chart-container {
+            background: white;
+            padding: 15px;
+            border-radius: 8px;
+            height: 400px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+
+        th {
+            background-color: #1a237e;
+            color: white;
+        }
+
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+
+        .positive { color: #4caf50; }
+        .negative { color: #f44336; }
+        .neutral { color: #757575; }
+
+        #status {
+            text-align: center;
+            padding: 10px;
+            color: #666;
+            font-size: 0.9em;
+        }
+    </style>
 </head>
 <body>
-  <h1>WallStreetBets Sentiment Heatmap</h1>
-  <div id="chart"></div>
-  <script>
-    // Connect to the Socket.IO server
-    const socket = io();
+    <div class="dashboard">
+        <h1>WSB Sentiment Analysis</h1>
+        <div id="status">Connecting to server...</div>
+        
+        <div class="charts">
+            <div class="chart-container">
+                <canvas id="sentimentChart"></canvas>
+            </div>
+        </div>
 
-    const width = 800, height = 600;
-    const svg = d3.select("#chart")
-                  .append("svg")
-                  .attr("width", width)
-                  .attr("height", height);
+        <table id="dataTable">
+            <thead>
+                <tr>
+                    <th>Ticker</th>
+                    <th>Sentiment</th>
+                    <th>Mentions</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
 
-    // Create a D3 force simulation for the bubble layout.
-    const simulation = d3.forceSimulation()
-                         .force("charge", d3.forceManyBody().strength(5))
-                         .force("center", d3.forceCenter(width / 2, height / 2))
-                         .force("collision", d3.forceCollide().radius(d => d.radius + 2));
+    <script>
+        // Initialize socket connection
+        const socket = io();
+        let chart;
 
-    let nodes = [];
-
-    /**
-     * Update the bubble chart based on new data.
-     * The incoming "data" object maps ticker symbols to an object containing sentiment info.
-     */
-    function updateChart(data) {
-      nodes = [];
-      // Build an array of nodes from the data.
-      for (const [ticker, stats] of Object.entries(data)) {
-        // Scale the bubble size by the number of mentions.
-        const radius = 10 + Math.sqrt(stats.count) * 5;
-        // Decide the bubble color by average sentiment:
-        // Positive sentiment: shades of green, negative: shades of red, near neutral: gray.
-        let color;
-        if (stats.avg_sentiment > 0.05) {
-          // Scale green intensity based on sentiment (clipped at 1)
-          const intensity = Math.min(1, stats.avg_sentiment);
-          color = d3.interpolateGreens(intensity);
-        } else if (stats.avg_sentiment < -0.05) {
-          const intensity = Math.min(1, Math.abs(stats.avg_sentiment));
-          color = d3.interpolateReds(intensity);
-        } else {
-          color = "#ccc";
-        }
-        nodes.push({
-          id: ticker,
-          ticker: ticker,
-          radius: radius,
-          color: color,
-          sentiment: stats.avg_sentiment,
-          count: stats.count
+        // Connection status updates
+        socket.on('connect', () => {
+            document.getElementById('status').textContent = 'Connected - Waiting for data...';
         });
-      }
 
-      // DATA JOIN for bubbles.
-      const bubbles = svg.selectAll(".bubble")
-                         .data(nodes, d => d.id);
+        socket.on('disconnect', () => {
+            document.getElementById('status').textContent = 'Disconnected - Trying to reconnect...';
+        });
 
-      // Remove old bubbles.
-      bubbles.exit().transition().duration(500).attr("r", 0).remove();
+        // Initialize chart
+        function createChart() {
+            const ctx = document.getElementById('sentimentChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'Sentiment Score',
+                        data: [],
+                        backgroundColor: [],
+                        borderColor: [],
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        title: {
+                            display: true,
+                            text: 'Ticker Sentiment Analysis'
+                        }
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
 
-      // Update existing bubbles.
-      bubbles.transition().duration(500)
-             .attr("r", d => d.radius)
-             .attr("fill", d => d.color);
+        // Update chart and table with new data
+        function updateDashboard(data) {
+            document.getElementById('status').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
 
-      // Add new bubbles.
-      const enter = bubbles.enter()
-                           .append("circle")
-                           .attr("class", "bubble")
-                           .attr("r", 0)
-                           .attr("fill", d => d.color)
-                           .call(drag(simulation));
+            // Sort tickers by absolute sentiment value
+            const sortedTickers = Object.entries(data)
+                .sort((a, b) => Math.abs(b[1].avg_sentiment) - Math.abs(a[1].avg_sentiment));
 
-      enter.transition().duration(500)
-           .attr("r", d => d.radius);
+            // Update chart
+            const labels = sortedTickers.map(([ticker]) => ticker);
+            const sentiments = sortedTickers.map(([_, data]) => data.avg_sentiment);
+            const colors = sentiments.map(s => s > 0 ? '#4caf50' : s < 0 ? '#f44336' : '#757575');
 
-      // Merge new and existing bubbles.
-      const allBubbles = enter.merge(bubbles);
+            chart.data.labels = labels;
+            chart.data.datasets[0].data = sentiments;
+            chart.data.datasets[0].backgroundColor = colors;
+            chart.update();
 
-      // DATA JOIN for labels.
-      const labels = svg.selectAll(".label")
-                        .data(nodes, d => d.id);
+            // Update table
+            const tbody = document.getElementById('dataTable').getElementsByTagName('tbody')[0];
+            tbody.innerHTML = '';
+            
+            sortedTickers.forEach(([ticker, data]) => {
+                const row = tbody.insertRow();
+                const sentimentClass = data.avg_sentiment > 0 ? 'positive' : 
+                                     data.avg_sentiment < 0 ? 'negative' : 
+                                     'neutral';
+                
+                row.innerHTML = `
+                    <td>${ticker}</td>
+                    <td class="${sentimentClass}">${data.avg_sentiment.toFixed(3)}</td>
+                    <td>${data.count}</td>
+                `;
+            });
+        }
 
-      labels.exit().remove();
-
-      labels.enter()
-            .append("text")
-            .attr("class", "label")
-            .attr("text-anchor", "middle")
-            .attr("dy", ".3em")
-            .text(d => d.ticker)
-            .merge(labels);
-
-      // Restart the simulation with the new nodes.
-      simulation.nodes(nodes).on("tick", ticked);
-      simulation.alpha(1).restart();
-    }
-
-    // Update positions of bubbles and labels on each simulation tick.
-    function ticked() {
-      svg.selectAll(".bubble")
-         .attr("cx", d => d.x)
-         .attr("cy", d => d.y);
-      svg.selectAll(".label")
-         .attr("x", d => d.x)
-         .attr("y", d => d.y);
-    }
-
-    // Add drag behavior to allow users to move bubbles.
-    function drag(simulation) {
-      function dragstarted(event, d) {
-        if (!event.active) simulation.alphaTarget(0.3).restart();
-        d.fx = d.x;
-        d.fy = d.y;
-      }
-      function dragged(event, d) {
-        d.fx = event.x;
-        d.fy = event.y;
-      }
-      function dragended(event, d) {
-        if (!event.active) simulation.alphaTarget(0);
-        d.fx = null;
-        d.fy = null;
-      }
-      return d3.drag()
-               .on("start", dragstarted)
-               .on("drag", dragged)
-               .on("end", dragended);
-    }
-
-    // Listen for real-time updates from the server.
-    socket.on('update', function(data) {
-      console.log("Received update:", data);
-      updateChart(data);
-    });
-  </script>
+        // Initialize chart when page loads
+        document.addEventListener('DOMContentLoaded', () => {
+            createChart();
+            
+            // Listen for data updates
+            socket.on('update', (data) => {
+                console.log('Received data:', data);  // Debug log
+                updateDashboard(data);
+            });
+        });
+    </script>
 </body>
 </html>
