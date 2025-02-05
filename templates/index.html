@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>WallStreetBets Sentiment Heatmap</title>
+  <!-- Include D3.js (v7) and Socket.IO -->
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.min.js"></script>
+  <style>
+    body { font-family: sans-serif; background-color: #f0f0f0; margin: 0; padding: 20px; }
+    h1 { text-align: center; }
+    svg { background-color: #fff; border: 1px solid #ccc; display: block; margin: auto; }
+    .bubble { stroke: #333; stroke-width: 1px; }
+    text { pointer-events: none; font-size: 14px; fill: #000; }
+  </style>
+</head>
+<body>
+  <h1>WallStreetBets Sentiment Heatmap</h1>
+  <div id="chart"></div>
+  <script>
+    // Connect to the Socket.IO server
+    const socket = io();
+
+    const width = 800, height = 600;
+    const svg = d3.select("#chart")
+                  .append("svg")
+                  .attr("width", width)
+                  .attr("height", height);
+
+    // Create a D3 force simulation for the bubble layout.
+    const simulation = d3.forceSimulation()
+                         .force("charge", d3.forceManyBody().strength(5))
+                         .force("center", d3.forceCenter(width / 2, height / 2))
+                         .force("collision", d3.forceCollide().radius(d => d.radius + 2));
+
+    let nodes = [];
+
+    /**
+     * Update the bubble chart based on new data.
+     * The incoming "data" object maps ticker symbols to an object containing sentiment info.
+     */
+    function updateChart(data) {
+      nodes = [];
+      // Build an array of nodes from the data.
+      for (const [ticker, stats] of Object.entries(data)) {
+        // Scale the bubble size by the number of mentions.
+        const radius = 10 + Math.sqrt(stats.count) * 5;
+        // Decide the bubble color by average sentiment:
+        // Positive sentiment: shades of green, negative: shades of red, near neutral: gray.
+        let color;
+        if (stats.avg_sentiment > 0.05) {
+          // Scale green intensity based on sentiment (clipped at 1)
+          const intensity = Math.min(1, stats.avg_sentiment);
+          color = d3.interpolateGreens(intensity);
+        } else if (stats.avg_sentiment < -0.05) {
+          const intensity = Math.min(1, Math.abs(stats.avg_sentiment));
+          color = d3.interpolateReds(intensity);
+        } else {
+          color = "#ccc";
+        }
+        nodes.push({
+          id: ticker,
+          ticker: ticker,
+          radius: radius,
+          color: color,
+          sentiment: stats.avg_sentiment,
+          count: stats.count
+        });
+      }
+
+      // DATA JOIN for bubbles.
+      const bubbles = svg.selectAll(".bubble")
+                         .data(nodes, d => d.id);
+
+      // Remove old bubbles.
+      bubbles.exit().transition().duration(500).attr("r", 0).remove();
+
+      // Update existing bubbles.
+      bubbles.transition().duration(500)
+             .attr("r", d => d.radius)
+             .attr("fill", d => d.color);
+
+      // Add new bubbles.
+      const enter = bubbles.enter()
+                           .append("circle")
+                           .attr("class", "bubble")
+                           .attr("r", 0)
+                           .attr("fill", d => d.color)
+                           .call(drag(simulation));
+
+      enter.transition().duration(500)
+           .attr("r", d => d.radius);
+
+      // Merge new and existing bubbles.
+      const allBubbles = enter.merge(bubbles);
+
+      // DATA JOIN for labels.
+      const labels = svg.selectAll(".label")
+                        .data(nodes, d => d.id);
+
+      labels.exit().remove();
+
+      labels.enter()
+            .append("text")
+            .attr("class", "label")
+            .attr("text-anchor", "middle")
+            .attr("dy", ".3em")
+            .text(d => d.ticker)
+            .merge(labels);
+
+      // Restart the simulation with the new nodes.
+      simulation.nodes(nodes).on("tick", ticked);
+      simulation.alpha(1).restart();
+    }
+
+    // Update positions of bubbles and labels on each simulation tick.
+    function ticked() {
+      svg.selectAll(".bubble")
+         .attr("cx", d => d.x)
+         .attr("cy", d => d.y);
+      svg.selectAll(".label")
+         .attr("x", d => d.x)
+         .attr("y", d => d.y);
+    }
+
+    // Add drag behavior to allow users to move bubbles.
+    function drag(simulation) {
+      function dragstarted(event, d) {
+        if (!event.active) simulation.alphaTarget(0.3).restart();
+        d.fx = d.x;
+        d.fy = d.y;
+      }
+      function dragged(event, d) {
+        d.fx = event.x;
+        d.fy = event.y;
+      }
+      function dragended(event, d) {
+        if (!event.active) simulation.alphaTarget(0);
+        d.fx = null;
+        d.fy = null;
+      }
+      return d3.drag()
+               .on("start", dragstarted)
+               .on("drag", dragged)
+               .on("end", dragended);
+    }
+
+    // Listen for real-time updates from the server.
+    socket.on('update', function(data) {
+      console.log("Received update:", data);
+      updateChart(data);
+    });
+  </script>
+</body>
+</html>
