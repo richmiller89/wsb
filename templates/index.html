@@ -3,194 +3,343 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WSB Sentiment Tracker</title>
+    <title>WSB Sentiment Analysis</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/3.7.0/chart.min.js"></script>
     <style>
-        body {
-            font-family: -apple-system, system-ui, sans-serif;
+        :root {
+            --bg-dark: #1e1e1e;
+            --bg-card: #2d2d2d;
+            --text-primary: #ffffff;
+            --text-secondary: #a0a0a0;
+            --accent-green: #4caf50;
+            --accent-red: #f44336;
+            --accent-neutral: #9e9e9e;
+        }
+
+        * {
             margin: 0;
-            padding: 20px;
-            background: #f0f2f5;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: -apple-system, system-ui, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
         }
 
-        .dashboard {
-            max-width: 1200px;
+        body {
+            background: var(--bg-dark);
+            color: var(--text-primary);
+            line-height: 1.6;
+        }
+
+        .container {
+            max-width: 1400px;
             margin: 0 auto;
-            background: white;
-            padding: 20px;
-            border-radius: 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 2rem;
         }
 
-        h1 {
-            text-align: center;
-            color: #1a237e;
-            margin-bottom: 30px;
+        .card {
+            background: var(--bg-card);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         }
 
-        .charts {
-            display: grid;
-            grid-template-columns: 1fr;
-            gap: 20px;
-            margin-bottom: 20px;
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .time-controls {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .time-button {
+            background: transparent;
+            border: 1px solid var(--text-secondary);
+            color: var(--text-secondary);
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .time-button.active {
+            background: var(--text-secondary);
+            color: var(--bg-dark);
         }
 
         .chart-container {
-            background: white;
-            padding: 15px;
-            border-radius: 8px;
             height: 400px;
+            position: relative;
         }
 
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 20px;
+        .trending-list {
+            display: grid;
+            gap: 0.75rem;
         }
 
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
+        .trending-item {
+            display: grid;
+            grid-template-columns: 100px 1fr 80px;
+            align-items: center;
+            gap: 1rem;
+            padding: 0.75rem;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            transition: all 0.2s ease;
         }
 
-        th {
-            background-color: #1a237e;
-            color: white;
+        .trending-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            transform: translateX(5px);
         }
 
-        tr:hover {
-            background-color: #f5f5f5;
+        .ticker {
+            font-weight: 600;
+            color: var(--text-primary);
         }
 
-        .positive { color: #4caf50; }
-        .negative { color: #f44336; }
-        .neutral { color: #757575; }
+        .sentiment-bar {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            display: flex;
+        }
+
+        .bar-segment {
+            height: 100%;
+            transition: width 0.3s ease;
+        }
+
+        .bar-segment.positive { background: var(--accent-green); }
+        .bar-segment.neutral { background: var(--accent-neutral); }
+        .bar-segment.negative { background: var(--accent-red); }
+
+        .mentions {
+            text-align: right;
+            color: var(--text-secondary);
+            font-size: 0.875rem;
+        }
 
         #status {
-            text-align: center;
-            padding: 10px;
-            color: #666;
-            font-size: 0.9em;
+            position: fixed;
+            bottom: 1rem;
+            right: 1rem;
+            padding: 0.5rem 1rem;
+            background: var(--bg-card);
+            border-radius: 6px;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
         }
+
+        .legend {
+            display: flex;
+            gap: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            font-size: 0.875rem;
+            color: var(--text-secondary);
+        }
+
+        .legend-color {
+            width: 12px;
+            height: 12px;
+            border-radius: 2px;
+        }
+
+        .legend-color.positive { background: var(--accent-green); }
+        .legend-color.neutral { background: var(--accent-neutral); }
+        .legend-color.negative { background: var(--accent-red); }
     </style>
 </head>
 <body>
-    <div class="dashboard">
-        <h1>WSB Sentiment Analysis</h1>
-        <div id="status">Connecting to server...</div>
-        
-        <div class="charts">
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h2>Sentiment Distribution</h2>
+                <div class="time-controls">
+                    <button class="time-button active" data-window="12H">12H</button>
+                    <button class="time-button" data-window="1D">1D</button>
+                    <button class="time-button" data-window="1W">1W</button>
+                    <button class="time-button" data-window="1M">1M</button>
+                </div>
+            </div>
+            <div class="legend">
+                <div class="legend-item">
+                    <div class="legend-color positive"></div>
+                    <span>Positive</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color neutral"></div>
+                    <span>Neutral</span>
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color negative"></div>
+                    <span>Negative</span>
+                </div>
+            </div>
             <div class="chart-container">
                 <canvas id="sentimentChart"></canvas>
             </div>
         </div>
 
-        <table id="dataTable">
-            <thead>
-                <tr>
-                    <th>Ticker</th>
-                    <th>Sentiment</th>
-                    <th>Mentions</th>
-                </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
+        <div class="card">
+            <div class="card-header">
+                <h2>Top Trending Stocks</h2>
+            </div>
+            <div id="trendingList" class="trending-list"></div>
+        </div>
     </div>
 
+    <div id="status">Connecting...</div>
+
     <script>
-        // Initialize socket connection
+        // Initialize Socket.IO connection
         const socket = io();
-        let chart;
+        let currentWindow = '12H';
+        let sentimentChart;
 
-        // Connection status updates
-        socket.on('connect', () => {
-            document.getElementById('status').textContent = 'Connected - Waiting for data...';
-        });
-
-        socket.on('disconnect', () => {
-            document.getElementById('status').textContent = 'Disconnected - Trying to reconnect...';
-        });
-
-        // Initialize chart
+        // Initialize sentiment chart
         function createChart() {
             const ctx = document.getElementById('sentimentChart').getContext('2d');
-            chart = new Chart(ctx, {
+            Chart.defaults.color = '#a0a0a0';
+            Chart.defaults.font.family = "'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif";
+
+            sentimentChart = new Chart(ctx, {
                 type: 'bar',
                 data: {
                     labels: [],
                     datasets: [{
-                        label: 'Sentiment Score',
+                        label: 'Positive',
                         data: [],
-                        backgroundColor: [],
-                        borderColor: [],
-                        borderWidth: 1
+                        backgroundColor: '#4caf50',
+                        stack: 'Stack 0'
+                    }, {
+                        label: 'Neutral',
+                        data: [],
+                        backgroundColor: '#9e9e9e',
+                        stack: 'Stack 0'
+                    }, {
+                        label: 'Negative',
+                        data: [],
+                        backgroundColor: '#f44336',
+                        stack: 'Stack 0'
                     }]
                 },
                 options: {
                     responsive: true,
                     maintainAspectRatio: false,
-                    plugins: {
-                        title: {
-                            display: true,
-                            text: 'Ticker Sentiment Analysis'
-                        }
+                    animation: {
+                        duration: 750,
+                        easing: 'easeInOutQuart'
                     },
                     scales: {
+                        x: {
+                            stacked: true,
+                            grid: {
+                                display: false
+                            }
+                        },
                         y: {
-                            beginAtZero: true
+                            stacked: true,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
                         }
                     }
                 }
             });
         }
 
-        // Update chart and table with new data
+        // Update the dashboard with new data
         function updateDashboard(data) {
-            document.getElementById('status').textContent = 'Last updated: ' + new Date().toLocaleTimeString();
+            const windowData = data[currentWindow];
+            if (!windowData) return;
 
-            // Sort tickers by absolute sentiment value
-            const sortedTickers = Object.entries(data)
-                .sort((a, b) => Math.abs(b[1].avg_sentiment) - Math.abs(a[1].avg_sentiment));
+            // Sort tickers by total mentions
+            const sortedTickers = Object.entries(windowData)
+                .sort((a, b) => b[1].total_mentions - a[1].total_mentions);
 
             // Update chart
             const labels = sortedTickers.map(([ticker]) => ticker);
-            const sentiments = sortedTickers.map(([_, data]) => data.avg_sentiment);
-            const colors = sentiments.map(s => s > 0 ? '#4caf50' : s < 0 ? '#f44336' : '#757575');
+            const positiveData = sortedTickers.map(([_, data]) => data.mentions.positive);
+            const neutralData = sortedTickers.map(([_, data]) => data.mentions.neutral);
+            const negativeData = sortedTickers.map(([_, data]) => data.mentions.negative);
 
-            chart.data.labels = labels;
-            chart.data.datasets[0].data = sentiments;
-            chart.data.datasets[0].backgroundColor = colors;
-            chart.update();
+            sentimentChart.data.labels = labels;
+            sentimentChart.data.datasets[0].data = positiveData;
+            sentimentChart.data.datasets[1].data = neutralData;
+            sentimentChart.data.datasets[2].data = negativeData;
+            sentimentChart.update();
 
-            // Update table
-            const tbody = document.getElementById('dataTable').getElementsByTagName('tbody')[0];
-            tbody.innerHTML = '';
-            
+            // Update trending list
+            const trendingList = document.getElementById('trendingList');
+            trendingList.innerHTML = '';
+
             sortedTickers.forEach(([ticker, data]) => {
-                const row = tbody.insertRow();
-                const sentimentClass = data.avg_sentiment > 0 ? 'positive' : 
-                                     data.avg_sentiment < 0 ? 'negative' : 
-                                     'neutral';
-                
-                row.innerHTML = `
-                    <td>${ticker}</td>
-                    <td class="${sentimentClass}">${data.avg_sentiment.toFixed(3)}</td>
-                    <td>${data.count}</td>
+                const total = data.total_mentions;
+                const positive = (data.mentions.positive / total) * 100;
+                const neutral = (data.mentions.neutral / total) * 100;
+                const negative = (data.mentions.negative / total) * 100;
+
+                const item = document.createElement('div');
+                item.className = 'trending-item';
+                item.innerHTML = `
+                    <div class="ticker">${ticker}</div>
+                    <div class="sentiment-bar">
+                        <div class="bar-segment positive" style="width: ${positive}%"></div>
+                        <div class="bar-segment neutral" style="width: ${neutral}%"></div>
+                        <div class="bar-segment negative" style="width: ${negative}%"></div>
+                    </div>
+                    <div class="mentions">${total}</div>
                 `;
+                trendingList.appendChild(item);
             });
+
+            // Update status
+            document.getElementById('status').textContent = 
+                `Last updated: ${new Date().toLocaleTimeString()}`;
         }
 
-        // Initialize chart when page loads
+        // Set up event listeners
         document.addEventListener('DOMContentLoaded', () => {
             createChart();
-            
-            // Listen for data updates
-            socket.on('update', (data) => {
-                console.log('Received data:', data);  // Debug log
-                updateDashboard(data);
+
+            // Time window controls
+            document.querySelectorAll('.time-button').forEach(button => {
+                button.addEventListener('click', () => {
+                    document.querySelector('.time-button.active').classList.remove('active');
+                    button.classList.add('active');
+                    currentWindow = button.dataset.window;
+                });
             });
+        });
+
+        // Socket.IO event handlers
+        socket.on('connect', () => {
+            document.getElementById('status').textContent = 'Connected';
+        });
+
+        socket.on('disconnect', () => {
+            document.getElementById('status').textContent = 'Disconnected - Trying to reconnect...';
+        });
+
+        socket.on('data_update', (data) => {
+            updateDashboard(data);
         });
     </script>
 </body>
